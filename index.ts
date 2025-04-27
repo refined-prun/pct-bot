@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events, Partials, ThreadChannel, Message } from 'discord.js';
+import { Client, GatewayIntentBits, Events, Partials, ThreadChannel, Message, ForumChannel } from "discord.js";
 import { Octokit } from '@octokit/rest';
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
@@ -153,6 +153,10 @@ async function processTrack(thread: ThreadChannel, message: Message) {
 
   await thread.send(`Tracked in ${issue.data.html_url}`);
   await message.delete();
+
+  const channel = thread.parent as ForumChannel;
+  const trackedTag = channel.availableTags.find(tag => tag.name.toLowerCase() === 'tracked');
+  await thread.setAppliedTags([trackedTag!.id]);
 }
 
 async function processUpdate(thread: ThreadChannel, message: Message) {
