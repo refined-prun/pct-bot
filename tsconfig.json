@@ -1,22 +1,25 @@
 {
   "compilerOptions": {
-    "target": "ES2021",
-    "module": "CommonJS",
-    "lib": ["ES2021"],
-    "moduleResolution": "Node",
-    "outDir": "./dist",
-    "rootDir": "./src",
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "moduleResolution": "Bundler",
     "strict": true,
     "esModuleInterop": true,
-    "downlevelIteration": true,
-    "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "noImplicitAny": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "types": ["node"]
+    "noEmit": true,
+    "types": ["node", "vite/client"]
   },
-  "include": ["index.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "index.ts",
+    "server/**/*.ts",
+    "shared/**/*.ts",
+    "web/**/*.ts",
+    "web/**/*.vue",
+    "tests/**/*.ts",
+    "vite.config.ts"
+  ]
 }

@@ -7,13 +7,27 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "start": "tsx index.ts"
+    "start": "tsx index.ts",
+    "dev": "tsx watch index.ts",
+    "build": "vite build",
+    "start:production": "NODE_ENV=production tsx index.ts",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@octokit/rest": "^21.1.1",
     "discord.js": "^14.19.1",
+    "dompurify": "^3.4.16",
     "dotenv": "^16.5.0",
+    "marked": "^18.0.14",
     "tsx": "^4.19.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vue": "^3.5.43"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "vite": "^8.3.1",
+    "vue-tsc": "^3.3.11"
   }
 }

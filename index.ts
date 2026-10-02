@@ -1,6 +1,9 @@
-import { Client, GatewayIntentBits, Events, Partials, ThreadChannel, Message, ForumChannel } from "discord.js";
+import { Client, GatewayIntentBits, Events, Partials, ThreadChannel, Message } from "discord.js";
 import { Octokit } from '@octokit/rest';
 import * as dotenv from 'dotenv';
+import { startBoardServer } from './server/http.js';
+import { TicketTracker, TRACKED_IN_REGEX, summarizeThread } from './server/tracking.js';
+import { GitHubAttachments } from './server/attachments.js';
 
 dotenv.config();
 
@@ -21,82 +24,19 @@ const bot = new Client({
 
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
 
-const TRACKED_IN_REGEX = /Tracked in (https:\/\/github\.com\/.*\/issues\/(\d+))/;
-
-async function summarizeThread(thread: ThreadChannel) {
-  const messages = await thread.messages.fetch({ limit: 100 });
-  const sortedMessages = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-  let content = `Thread ${thread.url}`;
-  const references = new Map<string, string>();
-
-  sortedMessages.forEach(msg => {
-    if (msg.type === 4) return;
-    if (msg.author.id === bot.user?.id) return;
-    const match = msg.content.match(TRACKED_IN_REGEX);
-    if (match) return;
-    if (msg.author.id === OWNER_DISCORD_ID && msg.content.startsWith('!')) return;
-    content += `\n\n`;
-    content += msg.reference?.messageId ? `↳<sub>${references.get(msg.reference.messageId)}</sub>\n` : ``;
-    content += `**${msg.author.username}**`;
-    let messageContent = '';
-    if (msg.content) {
-      messageContent += `\n${msg.content}`;
-    }
-    msg.attachments.forEach(attachment => {
-      messageContent += `\n[${attachment.name}]`;
-    });
-    content += messageContent;
-    let reference = messageContent.trim().split('\n')[0];
-    if (reference.length > 50) {
-      reference = reference.slice(0, 47) + '...';
-    }
-    references.set(msg.id, reference);
-  });
-
-  return content;
-}
+const tracker = new TicketTracker(bot, octokit, GITHUB_REPO, OWNER_DISCORD_ID, new GitHubAttachments(octokit, GITHUB_REPO));
 
 function isFeatureChannel(name: string) {
   return name.toLowerCase().includes('feature');
 }
 
 async function processTrack(thread: ThreadChannel, message: Message) {
-  const messages = await thread.messages.fetch({ limit: 100 });
-  for (const [, msg] of messages) {
-    if (msg.author.id === OWNER_DISCORD_ID || msg.author.id === bot.user?.id) {
-      const match = msg.content.match(TRACKED_IN_REGEX);
-      if (match) {
-        await replaceWithNotice(thread, message, 'Issue already exists for this thread.');
-        return;
-      }
-    }
-  }
-
-  let body = await summarizeThread(thread);
-  const channelName = thread.parent!.name.toLowerCase();
-  const labels = ['discord'];
-  if (isFeatureChannel(channelName)) {
-    labels.push('enhancement');
+  const result = await tracker.track(thread);
+  if (result.warning || result.alreadyTracked) {
+    await replaceWithNotice(thread, message, result.warning ?? 'Issue already exists for this thread.');
   } else {
-    labels.push('bug');
+    await message.delete();
   }
-
-  const [owner, repo] = GITHUB_REPO.split('/');
-  const issue = await octokit.rest.issues.create({
-    owner,
-    repo,
-    title: thread.name,
-    body,
-    labels,
-  });
-
-  await thread.send(`Tracked in ${issue.data.html_url}`);
-  await message.delete();
-
-  const channel = thread.parent as ForumChannel;
-  const trackedTag = channel.availableTags.find(tag => tag.name.toLowerCase() === 'tracked');
-  await thread.setAppliedTags([trackedTag!.id]);
 }
 
 async function processUpdate(thread: ThreadChannel, message: Message) {
@@ -121,7 +61,7 @@ async function processUpdate(thread: ThreadChannel, message: Message) {
   const [owner, repo] = GITHUB_REPO.split('/');
 
   await message.react('🧠')
-  let body = await summarizeThread(thread);
+  let body = await summarizeThread(thread, bot.user?.id, OWNER_DISCORD_ID);
   const channelName = thread.parent!.name.toLowerCase();
   const labels = ['discord'];
   if (isFeatureChannel(channelName)) {
@@ -139,7 +79,13 @@ async function processUpdate(thread: ThreadChannel, message: Message) {
     labels,
   });
 
-  await replaceWithNotice(thread, message, 'Issue updated.');
+  let notice = 'Issue updated.';
+  try {
+    await tracker.syncAttachments(thread, trackedNumber);
+  } catch (error) {
+    notice = `Issue updated, but attachments could not be copied: ${error instanceof Error ? error.message : 'Upload failed'}`;
+  }
+  await replaceWithNotice(thread, message, notice);
 }
 
 async function replaceWithNotice(thread: ThreadChannel, message: Message, reply: string) {
@@ -186,4 +132,20 @@ bot.on(Events.ClientReady, () => {
 });
 
 console.log('Starting bot...');
-bot.login(DISCORD_TOKEN);
+const boardServer = await startBoardServer(bot, async (id) => {
+  const thread = await bot.channels.fetch(id, { force: true });
+  if (!(thread instanceof ThreadChannel)) throw new Error('Ticket thread not found.');
+  return tracker.track(thread);
+});
+bot.login(DISCORD_TOKEN).catch(error => {
+  console.error('Discord login failed:', error instanceof Error ? error.message : 'Unknown error');
+  process.exitCode = 1;
+  void boardServer.close();
+  bot.destroy();
+});
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void boardServer.close();
+    bot.destroy();
+  });
+}
